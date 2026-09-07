@@ -1,5 +1,5 @@
 [Actions]
-CreateDatabase:Name=TERMINOLOGY_DATA,Directory=/usr/irissys/mgr/TERMINOLOGY_DATA,Size=4500
+CreateDatabase:Name=TERMINOLOGY_DATA,Directory=/usr/irissys/mgr/TERMINOLOGY_DATA
 
 CreateDatabase:Name=TERMINOLOGY_CODE,Directory=/usr/irissys/mgr/TERMINOLOGY_CODE
 

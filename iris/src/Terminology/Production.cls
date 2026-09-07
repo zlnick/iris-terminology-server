@@ -16,7 +16,7 @@ XData ProductionDefinition
   <Item Name="SnomedFileProcessing" Category="" ClassName="Terminology.Production.BP.SnomedRf2Load" PoolSize="1" Enabled="true" Foreground="false" Comment="" LogTraceEvents="true" Schedule="">
     <Setting Target="Host" Name="TempDirectory">/iris-shared/tmp</Setting>
     <Setting Target="Host" Name="PreferredTermLanguageRefsetId">450828004</Setting>
-    <Setting Target="Host" Name="GenerateVectors">1</Setting>
+    <Setting Target="Host" Name="GenerateVectors">0</Setting>
   </Item>
   <Item Name="SnomedGatewayService" Category="" ClassName="Terminology.Production.BS.SnomedGatewayService" PoolSize="0" Enabled="true" Foreground="false" Comment="" LogTraceEvents="false" Schedule="">
   </Item>
@@ -48,7 +48,7 @@ XData ProductionDefinition
   <Item Name="LoincFileProcessing" Category="" ClassName="Terminology.Production.BP.LoincLoad" PoolSize="1" Enabled="true" Foreground="false" Comment="" LogTraceEvents="false" Schedule="">
     <Setting Target="Host" Name="ClearBeforeLoad">1</Setting>
     <Setting Target="Host" Name="TempDirectory">/iris-shared/tmp</Setting>
-    <Setting Target="Host" Name="GenerateVectors">1</Setting>
+    <Setting Target="Host" Name="GenerateVectors">0</Setting>
   </Item>
   <Item Name="LoincRepositoryOperation" Category="" ClassName="Terminology.Production.BO.LoincRepositoryOperation" PoolSize="1" Enabled="true" Foreground="false" Comment="" LogTraceEvents="false" Schedule="">
   </Item>
@@ -66,14 +66,14 @@ XData ProductionDefinition
   <Item Name="ICDFileProcessing" Category="" ClassName="Terminology.Production.BP.ICDLoad" PoolSize="1" Enabled="true" Foreground="false" Comment="" LogTraceEvents="false" Schedule="">
     <Setting Target="Host" Name="ReleaseId">ICD-10-ES 2026</Setting>
     <Setting Target="Host" Name="Version">10</Setting>
-    <Setting Target="Host" Name="GenerateVectors">1</Setting>
+    <Setting Target="Host" Name="GenerateVectors">0</Setting>
     <Setting Target="Host" Name="ClearBeforeLoad">1</Setting>
   </Item>
   <Item Name="ICDRepositoryOperation" Category="" ClassName="Terminology.Production.BO.ICDRepositoryOperation" PoolSize="1" Enabled="true" Foreground="false" Comment="" LogTraceEvents="false" Schedule="">
   </Item>
-  <Item Name="VectorGatewayService" Category="" ClassName="Terminology.Production.BS.VectorGatewayService" PoolSize="0" Enabled="true" Foreground="false" Comment="" LogTraceEvents="false" Schedule="">
+  <Item Name="VectorGatewayService" Category="" ClassName="Terminology.Production.BS.VectorGatewayService" PoolSize="0" Enabled="false" Foreground="false" Comment="" LogTraceEvents="false" Schedule="">
   </Item>
-  <Item Name="VectorSearchOperation" Category="" ClassName="Terminology.Production.BO.VectorSearchOperation" PoolSize="1" Enabled="true" Foreground="false" Comment="" LogTraceEvents="false" Schedule="">
+  <Item Name="VectorSearchOperation" Category="" ClassName="Terminology.Production.BO.VectorSearchOperation" PoolSize="1" Enabled="false" Foreground="false" Comment="" LogTraceEvents="false" Schedule="">
   </Item>
 </Production>
 }
