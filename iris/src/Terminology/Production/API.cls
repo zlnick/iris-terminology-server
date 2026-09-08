@@ -58,6 +58,9 @@ XData UrlMap
     <Route Url="/drug/lookup" Method="GET" Call="DrugLookup"/>
     <Route Url="/drug/validate-code" Method="GET" Call="DrugValidate"/>
     <Route Url="/drug/codesystems" Method="GET" Call="DrugCodeSystems"/>
+    <Route Url="/rxnorm/search" Method="GET" Call="RxnormSearch"/>
+    <Route Url="/rxnorm/lookup" Method="GET" Call="RxnormLookup"/>
+    <Route Url="/rxnorm/validate-code" Method="GET" Call="RxnormValidate"/>
     <Route Url="/vector/search" Method="GET" Call="VectorSearch"/>
     <Route Url="/vector/crosswalk" Method="GET" Call="VectorCrosswalk"/>
 </Routes>
@@ -969,6 +972,122 @@ ClassMethod VectorCrosswalk() As %Status
     Do ..WriteError("跨术语集语义匹配(crosswalk)由平台 AI 数据转换 Skill 负责，本术语服务器不提供（裁剪版）", 501)
     Return $$$OK
 }
+ClassMethod RxnormSearch() As %Status
+{
+    // RxNorm 名称检索：q 必填；可选 tty（逗号分隔）与 limit；名称包含匹配（英文，大小写不敏感）
+    Try {
+        Set q = $Get(%request.Data("q",1))
+        If $ZSTRIP(q,"<>W")="" {
+            Do ..WriteError("参数 q（药名检索）必填", 400)
+            Return $$$OK
+        }
+        Set limit = +$Get(%request.Data("limit",1))
+        If limit=0 Set limit=20
+        Set tty = $Get(%request.Data("tty",1))
+
+        Set stmt = ##class(%SQL.Statement).%New()
+        Set sql = "SELECT TOP ? Rxcui, Tty, Str FROM Terminology_Rxnorm.Concept WHERE Str LIKE ?"
+        Set tArgs($I(tArgs)) = limit
+        Set tArgs($I(tArgs)) = "%"_q_"%"
+        If tty '= "" {
+            Set ttys = $Length(tty,",")
+            Set sql = sql _ " AND Tty IN ("
+            For i = 1:1:ttys {
+                If i>1 Set sql = sql _ ","
+                Set sql = sql _ "?"
+                Set tArgs($I(tArgs)) = $Piece(tty,",",i)
+            }
+            Set sql = sql _ ")"
+        }
+        Set sql = sql _ " ORDER BY $LENGTH(Str)"
+        Do stmt.%Prepare(sql)
+        Set rs = stmt.%Execute(tArgs...)
+
+        Set out = {}
+        Set out.query = q
+        Set out.items = []
+        While rs.%Next() {
+            Set o = {}
+            Set o.rxcui = rs.%Get("Rxcui")
+            Set o.tty = rs.%Get("Tty")
+            Set o.str = rs.%Get("Str")
+            Do out.items.%Push(o)
+        }
+        Set out.count = out.items.%Size()
+        Set %response.ContentType = "application/json"
+        Do out.%ToJSON()
+        Return $$$OK
+    } Catch ex {
+        Do ..WriteError(ex.DisplayString(), 500)
+        Return $$$OK
+    }
+}
+
+ClassMethod RxnormLookup() As %Status
+{
+    // RxNorm 概念查询：rxcui 必填，返回该概念全部名称/TTY
+    Try {
+        Set rxcui = $Get(%request.Data("rxcui",1))
+        If rxcui = "" {
+            Do ..WriteError("参数 rxcui 必填", 400)
+            Return $$$OK
+        }
+        Set stmt = ##class(%SQL.Statement).%New()
+        Do stmt.%Prepare("SELECT RxaUI, Tty, Str FROM Terminology_Rxnorm.Concept WHERE Rxcui = ? ORDER BY Tty, Str")
+        Set rs = stmt.%Execute(rxcui)
+
+        Set out = {}
+        Set out.rxcui = rxcui
+        Set out.items = []
+        While rs.%Next() {
+            Set o = {}
+            Set o.tty = rs.%Get("Tty")
+            Set o.str = rs.%Get("Str")
+            Set o.rxaUI = rs.%Get("RxaUI")
+            Do out.items.%Push(o)
+        }
+        If out.items.%Size() = 0 {
+            Do ..WriteError("RXCUI 不存在: "_rxcui, 404)
+            Return $$$OK
+        }
+        Set out.count = out.items.%Size()
+        Set %response.ContentType = "application/json"
+        Do out.%ToJSON()
+        Return $$$OK
+    } Catch ex {
+        Do ..WriteError(ex.DisplayString(), 500)
+        Return $$$OK
+    }
+}
+
+ClassMethod RxnormValidate() As %Status
+{
+    // RxNorm 码校验：返回该 RXCUI 是否存在
+    Try {
+        Set rxcui = $Get(%request.Data("rxcui",1))
+        If rxcui = "" {
+            Do ..WriteError("参数 rxcui 必填", 400)
+            Return $$$OK
+        }
+        Set stmt = ##class(%SQL.Statement).%New()
+        Do stmt.%Prepare("SELECT TOP 1 Rxcui FROM Terminology_Rxnorm.Concept WHERE Rxcui = ?")
+        Set rs = stmt.%Execute(rxcui)
+        Set out = {}
+        If rs.%Next() {
+            Set out.valid = 1
+        } Else {
+            Set out.valid = 0
+        }
+        Set out.rxcui = rxcui
+        Set %response.ContentType = "application/json"
+        Do out.%ToJSON()
+        Return $$$OK
+    } Catch ex {
+        Do ..WriteError(ex.DisplayString(), 500)
+        Return $$$OK
+    }
+}
+
 ClassMethod SendGatewayRequest(pRequest As Ens.Request, Output pResponse As Ens.Response, tGatewayName As %String, tTargetName As %String) As %Status
 {
   Do ##class(Terminology.Core.Trace).StartRequest("native", tTargetName, "gateway="_tGatewayName_" requestClass="_$Select($IsObject(pRequest):pRequest.%ClassName(1),1:""))
