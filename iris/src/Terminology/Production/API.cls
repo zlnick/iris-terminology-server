@@ -54,6 +54,10 @@ XData UrlMap
     <Route Url="/icd/codes/:code/ancestors" Method="GET" Call="ICDGetAncestors"/>
     <Route Url="/icd/families" Method="GET" Call="ICDGetFamilies"/>
     <Route Url="/icd/validate-code" Method="GET" Call="ICDValidateCode"/>
+    <Route Url="/drug/search" Method="GET" Call="DrugSearch"/>
+    <Route Url="/drug/lookup" Method="GET" Call="DrugLookup"/>
+    <Route Url="/drug/validate-code" Method="GET" Call="DrugValidate"/>
+    <Route Url="/drug/codesystems" Method="GET" Call="DrugCodeSystems"/>
     <Route Url="/vector/search" Method="GET" Call="VectorSearch"/>
     <Route Url="/vector/crosswalk" Method="GET" Call="VectorCrosswalk"/>
 </Routes>
@@ -1030,6 +1034,51 @@ ClassMethod WriteError(pMessage As %String, pHttpCode As %Integer = 500) As %Sta
     Set obj.message = pMessage
 
     Write obj.%ToJSON()
+    Return $$$OK
+}
+
+// ==================== 药品目录术语（医保 NRDL / 商保 CBIH） ====================
+ClassMethod DrugSearch() As %Status
+{
+    Set %response.ContentType = "application/json"
+    Set cs = $Get(%request.Data("codeSystem",1))
+    If cs = "" Set cs = "nrdl"
+    Set q = $Get(%request.Data("q",1))
+    Set limit = +$Get(%request.Data("limit",1))
+    If limit = 0 Set limit = 20
+    Set offset = +$Get(%request.Data("offset",1))
+    Set j = ##class(Terminology.Drug.Utils).Search(cs, q, limit, offset)
+    Write j
+    Return $$$OK
+}
+
+ClassMethod DrugLookup() As %Status
+{
+    Set %response.ContentType = "application/json"
+    Set cs = $Get(%request.Data("codeSystem",1))
+    If cs = "" Set cs = "nrdl"
+    Set code = $Get(%request.Data("code",1))
+    Set j = ##class(Terminology.Drug.Utils).Lookup(cs, code)
+    Write j
+    Return $$$OK
+}
+
+ClassMethod DrugValidate() As %Status
+{
+    Set %response.ContentType = "application/json"
+    Set cs = $Get(%request.Data("codeSystem",1))
+    If cs = "" Set cs = "nrdl"
+    Set code = $Get(%request.Data("code",1))
+    Set j = ##class(Terminology.Drug.Utils).Validate(cs, code)
+    Write j
+    Return $$$OK
+}
+
+ClassMethod DrugCodeSystems() As %Status
+{
+    Set %response.ContentType = "application/json"
+    Set arr = ##class(Terminology.Drug.Utils).CodeSystemIds()
+    Write {"codeSystems":(arr)}.%ToJSON()
     Return $$$OK
 }
 
