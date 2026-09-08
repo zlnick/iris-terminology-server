@@ -284,19 +284,23 @@ ClassMethod SearchSimilar(pText As %String, pSystemUri As %String = "", pRelease
     return result
 }
 
-ClassMethod EncodeText(pText As %String, pModelName As %String = "FremyCompany/BioLORD-2023-M") As %String [ Language = python ]
+ClassMethod EncodeText(pText As %String, pModelName As %String = "Qwen3-Embedding-0.6B") As %String [ Language = python ]
 {
+    # demo-community: 编码改由 dataflow-net 内 embedding 服务（Qwen3-Embedding-0.6B）完成，
+    # 上游原实现为 IRIS 内 sentence-transformers（需模型文件/许可）。输出 L2 归一化 -> TO_VECTOR(?,DECIMAL) 兼容。
+    import json
+    import math
     import os
-    import sentence_transformers
+    import urllib.request
 
-    model_dir = "/iris-shared/model/"
-    if not os.path.isdir(model_dir):
-        model = sentence_transformers.SentenceTransformer(str(pModelName))
-        model.save(model_dir)
-
-    model = sentence_transformers.SentenceTransformer(model_dir)
-    embedding = model.encode([str(pText)], normalize_embeddings=True)[0]
-    return str(embedding.tolist())
+    url = os.environ.get("EMBEDDING_URL", "http://embedding:8000/v1/embeddings")
+    data = json.dumps({"input": [str(pText)]}, ensure_ascii=False).encode("utf-8")
+    req = urllib.request.Request(url, data=data, headers={"Content-Type": "application/json"})
+    with urllib.request.urlopen(req, timeout=30) as resp:
+        emb = json.loads(resp.read().decode("utf-8"))["data"][0]["embedding"]
+    norm = math.sqrt(sum(x * x for x in emb)) or 1.0
+    emb = [x / norm for x in emb]
+    return "[" + ",".join(f"{x:.6f}" for x in emb) + "]"
 }
 
 ClassMethod SearchSimilarMulti(pText As %String, pSystemUris As %DynamicArray = "", pReleaseIds As %DynamicArray = "", pLang As %String = "", pLimit As %Integer = 10, pModelName As %String = "FremyCompany/BioLORD-2023-M") As Terminology.Vector.DTO.SearchResult

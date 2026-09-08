@@ -13,7 +13,7 @@ Property Text As %String(MAXLEN = 2000) [ Required ];
 
 Property Model As %String(MAXLEN = 100);
 
-Property Embedding As %Library.Vector(DATATYPE = "DECIMAL", LEN = 768);
+Property Embedding As %Library.Vector(DATATYPE = "DECIMAL", LEN = 1024);
 
 Index PK On (ReleaseId, SystemUri, Code, Lang, Text) [ Unique ];
 

@@ -891,45 +891,59 @@ ClassMethod ICDValidateCode() As %Status
 
 ClassMethod VectorSearch() As %Status
 {
-    Set tSC = $$$OK
-
     Try {
-        Set req = ##class(Terminology.Production.Msg.VectorSearchRequest).%New()
+        Set q = $Get(%request.Data("q",1))
+        If $ZSTRIP(q,"<>W")="" {
+            Do ..WriteError("参数 q（查询文本）必填", 400)
+            Return $$$OK
+        }
 
-        Set req.Query = $Get(%request.Data("q",1))
-        Set req.Lang = $Get(%request.Data("lang",1))
-        Set req.Limit = +$Get(%request.Data("limit",1))
-        If req.Limit=0 Set req.Limit=10
+        Set lang = $Get(%request.Data("lang",1))
+        Set limit = +$Get(%request.Data("limit",1))
+        If limit=0 Set limit=10
+        Set model = $Get(%request.Data("model",1))
+        If model="" Set model="Qwen3-Embedding-0.6B"
 
-        Set req.ModelName = $Get(%request.Data("model",1))
-        If req.ModelName="" Set req.ModelName="FremyCompany/BioLORD-2023-M"
-
-        Set req.SystemUris = ##class(%ListOfDataTypes).%New()
-        Set req.ReleaseIds = ##class(%ListOfDataTypes).%New()
-
+        Set sysUris = []
         Set i=""
         For  {
             Set i=$Order(%request.Data("systemUri",i))
             Quit:i=""
-            Do req.SystemUris.Insert($Get(%request.Data("systemUri",i)))
+            Do sysUris.%Push($Get(%request.Data("systemUri",i)))
         }
 
+        Set relIds = []
         Set i=""
         For  {
             Set i=$Order(%request.Data("releaseId",i))
             Quit:i=""
-            Do req.ReleaseIds.Insert($Get(%request.Data("releaseId",i)))
+            Do relIds.%Push($Get(%request.Data("releaseId",i)))
         }
 
-        Set rsp = ""
-        Set tSC = ..SendGatewayRequest(req, .rsp, ..#VectorGatewayConfigName, ..#VectorTargetConfigName)
+        Set res = ##class(Terminology.Vector.Utils).SearchSimilarMulti(q, sysUris, relIds, lang, limit, model)
 
-        If $$$ISERR(tSC) {
-            Do ..WriteError($System.Status.GetOneErrorText(tSC), 500)
-            Return $$$OK
+        // 空结果时探活 embedding 服务：编码失败抛异常 -> catch 显式 500（不静默返回空）
+        If res.Count=0 {
+            Do ##class(Terminology.Vector.Utils).EncodeText(q, model)
         }
 
-        Do ..WriteDynamicResponse(rsp.Payload)
+        Set out = {}
+        Set out.count = res.Count
+        Set out.items = []
+        For i=1:1:res.Items.Count() {
+            Set it = res.Items.GetAt(i)
+            Set o = {}
+            Set o.systemUri = it.SystemUri
+            Set o.releaseId = it.ReleaseId
+            Set o.code = it.Code
+            Set o.lang = it.Lang
+            Set o.text = it.Text
+            Set o.model = it.Model
+            Set o.score = it.Score
+            Do out.items.%Push(o)
+        }
+        Set %response.ContentType = "application/json"
+        Do out.%ToJSON()
         Return $$$OK
     } Catch ex {
         Do ..WriteError(ex.DisplayString(), 500)
@@ -939,56 +953,9 @@ ClassMethod VectorSearch() As %Status
 
 ClassMethod VectorCrosswalk() As %Status
 {
-    Set tSC = $$$OK
-
-    Try {
-        Set req = ##class(Terminology.Production.Msg.VectorCrosswalkRequest).%New()
-
-        Set req.Query = $Get(%request.Data("q",1))
-        Set req.SourceSystemUri = $Get(%request.Data("sourceSystemUri",1))
-        Set req.SourceCode = $Get(%request.Data("sourceCode",1))
-        Set req.SourceReleaseId = $Get(%request.Data("sourceReleaseId",1))
-        Set req.Lang = $Get(%request.Data("lang",1))
-
-        Set req.Limit = +$Get(%request.Data("limit",1))
-        If req.Limit=0 Set req.Limit=10
-
-        Set req.ModelName = $Get(%request.Data("model",1))
-        If req.ModelName="" Set req.ModelName="FremyCompany/BioLORD-2023-M"
-
-        Set req.TargetSystemUris = ##class(%ListOfDataTypes).%New()
-        Set req.TargetReleaseIds = ##class(%ListOfDataTypes).%New()
-
-        Set i=""
-        For  {
-            Set i=$Order(%request.Data("targetSystemUri",i))
-            Quit:i=""
-            Do req.TargetSystemUris.Insert($Get(%request.Data("targetSystemUri",i)))
-        }
-
-        Set i=""
-        For  {
-            Set i=$Order(%request.Data("targetReleaseId",i))
-            Quit:i=""
-            Do req.TargetReleaseIds.Insert($Get(%request.Data("targetReleaseId",i)))
-        }
-
-        Set rsp = ""
-        Set tSC = ..SendGatewayRequest(req, .rsp, ..#VectorGatewayConfigName, ..#VectorTargetConfigName)
-
-        If $$$ISERR(tSC) {
-            Do ..WriteError($System.Status.GetOneErrorText(tSC), 500)
-            Return $$$OK
-        }
-
-        Do ..WriteDynamicResponse(rsp.Payload)
-        Return $$$OK
-    } Catch ex {
-        Do ..WriteError(ex.DisplayString(), 500)
-        Return $$$OK
-    }
+    Do ..WriteError("跨术语集语义匹配(crosswalk)由平台 AI 数据转换 Skill 负责，本术语服务器不提供（裁剪版）", 501)
+    Return $$$OK
 }
-
 ClassMethod SendGatewayRequest(pRequest As Ens.Request, Output pResponse As Ens.Response, tGatewayName As %String, tTargetName As %String) As %Status
 {
   Do ##class(Terminology.Core.Trace).StartRequest("native", tTargetName, "gateway="_tGatewayName_" requestClass="_$Select($IsObject(pRequest):pRequest.%ClassName(1),1:""))
