@@ -10,6 +10,12 @@ ClassMethod CodeSystemIds() As %DynamicArray
     Quit arr
 }
 
+/// 输出端清洗：去除控制字符（如 IRIS 空串 NUL），避免 JSON 出现 \u0000。
+ClassMethod Norm(pValue As %String) As %String
+{
+    Quit $ZSTRIP($Get(pValue), "*C")
+}
+
 ClassMethod Search(pCodeSystemId As %String = "nrdl", pQuery As %String = "",
                    pLimit As %Integer = 20, pOffset As %Integer = 0) As %String
 {
@@ -34,13 +40,13 @@ ClassMethod Search(pCodeSystemId As %String = "nrdl", pQuery As %String = "",
             If count >= pOffset {
                 If pLimit > 0, items.%Size() >= pLimit Quit
                 Set it = {}
-                Set it.code = rs.%Get("Code")
-                Set it.display = rs.%Get("Display")
-                Set it.form = rs.%Get("Form")
-                Set it.note = rs.%Get("Note")
-                Set it.category = rs.%Get("Category")
-                Set it.section = rs.%Get("SectionName")
-                Set it.extras = rs.%Get("Extras")
+                Set it.code = ..Norm(rs.%Get("Code"))
+                Set it.display = ..Norm(rs.%Get("Display"))
+                Set it.form = ..Norm(rs.%Get("Form"))
+                Set it.note = ..Norm(rs.%Get("Note"))
+                Set it.category = ..Norm(rs.%Get("Category"))
+                Set it.section = ..Norm(rs.%Get("SectionName"))
+                Set it.extras = ..Norm(rs.%Get("Extras"))
                 Set it.srcPage = rs.%Get("SrcPage")
                 Do items.%Push(it)
             }
@@ -74,13 +80,13 @@ ClassMethod Lookup(pCodeSystemId As %String = "nrdl", pCode As %String = "") As 
                 Set o.codeSystemId = pCodeSystemId
                 Set o.found = 1
                 Set it = {}
-                Set it.code = rs.%Get("Code")
-                Set it.display = rs.%Get("Display")
-                Set it.form = rs.%Get("Form")
-                Set it.note = rs.%Get("Note")
-                Set it.category = rs.%Get("Category")
-                Set it.section = rs.%Get("SectionName")
-                Set it.extras = rs.%Get("Extras")
+                Set it.code = ..Norm(rs.%Get("Code"))
+                Set it.display = ..Norm(rs.%Get("Display"))
+                Set it.form = ..Norm(rs.%Get("Form"))
+                Set it.note = ..Norm(rs.%Get("Note"))
+                Set it.category = ..Norm(rs.%Get("Category"))
+                Set it.section = ..Norm(rs.%Get("SectionName"))
+                Set it.extras = ..Norm(rs.%Get("Extras"))
                 Set o.item = it
             } Else {
                 Set o.codeSystemId = pCodeSystemId
@@ -110,7 +116,7 @@ ClassMethod Validate(pCodeSystemId As %String = "nrdl", pCode As %String = "") A
         } Else {
             Set rs = st.%Execute(pCodeSystemId, pCode)
             Set n = 0
-            If rs.%Next() Set n = rs.%Get("N")
+            If rs.%Next() Set n = ..Norm(rs.%Get("N"))
             Set o.valid = $Select(n > 0: 1, 1: 0)
         }
     } Catch ex {
