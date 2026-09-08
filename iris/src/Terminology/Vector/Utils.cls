@@ -284,23 +284,71 @@ ClassMethod SearchSimilar(pText As %String, pSystemUri As %String = "", pRelease
     return result
 }
 
-ClassMethod EncodeText(pText As %String, pModelName As %String = "Qwen3-Embedding-0.6B") As %String [ Language = python ]
+ClassMethod EncodeText(pText As %String, pModelName As %String = "Qwen3-Embedding-0.6B") As %String
 {
-    # demo-community: 编码改由 dataflow-net 内 embedding 服务（Qwen3-Embedding-0.6B）完成，
-    # 上游原实现为 IRIS 内 sentence-transformers（需模型文件/许可）。输出 L2 归一化 -> TO_VECTOR(?,DECIMAL) 兼容。
-    import json
-    import math
-    import os
-    import urllib.request
+    // demo-community: 向量编码由 dataflow-net 内 embedding 服务（Qwen3-Embedding-0.6B）完成。
+    // 纯 ObjectScript 发 HTTP（避开 Embedded Python 网关中文转码）；L2 归一化（点积=余弦），兼容上游 TO_VECTOR(?,DECIMAL)。
+    Set vec = ""
+    Try {
+        Set host = $Get(^Config("Vector", "EmbeddingHost"), "embedding")
+        Set port = +$Get(^Config("Vector", "EmbeddingPort"), 8000)
+        Set req = ##class(%Net.HttpRequest).%New()
+        Set req.Server = host
+        Set req.Port = port
+        Set req.ContentType = "application/json; charset=utf-8"
+        Set req.NoDefaultContentCharset = 1
+        Set req.Timeout = 30
+        Set body = "{""input"":[""" _ ..JsonEscape(pText) _ """]}"
+        Set stream = ##class(%Stream.GlobalCharacter).%New()
+        Do stream.Write(body)
+        Set req.EntityBody = stream
+        Set sc = req.Post("/v1/embeddings")
+        If $System.Status.IsError(sc) {
+            Set vec = ""
+        } Else {
+            Set dyn = ##class(%DynamicObject).%FromJSON(req.HttpResponse.Data)
+            If '$IsObject(dyn) {
+                Set vec = ""
+            } Else {
+                Set item = dyn.data.%Get(0)
+                Set arr = item.embedding
+                Set n = arr.%Size()
+                Set sum = 0
+                For i = 0:1:n - 1 {
+                    Set val = +arr.%Get(i)
+                    Set sum = sum + (val * val)
+                }
+                If sum <= 0 {
+                    Set vec = ""
+                } Else {
+                    Set norm = $ZPOWER(sum, 0.5)
+                    Set out = "["
+                    For i = 0:1:n - 1 {
+                        If i > 0 Set out = out _ ","
+                        Set out = out _ $JUSTIFY((+arr.%Get(i)) / norm, 0, 6)
+                    }
+                    Set out = out _ "]"
+                    Set vec = out
+                }
+            }
+        }
+    } Catch ex {
+        Set vec = ""
+    }
+    Quit vec
+}
 
-    url = os.environ.get("EMBEDDING_URL", "http://embedding:8000/v1/embeddings")
-    data = json.dumps({"input": [str(pText)]}, ensure_ascii=False).encode("utf-8")
-    req = urllib.request.Request(url, data=data, headers={"Content-Type": "application/json"})
-    with urllib.request.urlopen(req, timeout=30) as resp:
-        emb = json.loads(resp.read().decode("utf-8"))["data"][0]["embedding"]
-    norm = math.sqrt(sum(x * x for x in emb)) or 1.0
-    emb = [x / norm for x in emb]
-    return "[" + ",".join(f"{x:.6f}" for x in emb) + "]"
+ClassMethod JsonEscape(pText As %String) As %String [ Private ]
+{
+    Set s = pText
+    Set bs = $Char(92)   // \ 反斜杠
+    Set dq = $Char(34)   // " 双引号
+    Set s = $Replace(s, bs, bs _ bs)
+    Set s = $Replace(s, dq, bs _ dq)
+    Set s = $Replace(s, $Char(9), "\t")
+    Set s = $Replace(s, $Char(10), "\n")
+    Set s = $Replace(s, $Char(13), "\r")
+    Quit s
 }
 
 ClassMethod SearchSimilarMulti(pText As %String, pSystemUris As %DynamicArray = "", pReleaseIds As %DynamicArray = "", pLang As %String = "", pLimit As %Integer = 10, pModelName As %String = "FremyCompany/BioLORD-2023-M") As Terminology.Vector.DTO.SearchResult

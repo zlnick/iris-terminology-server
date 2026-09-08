@@ -927,7 +927,20 @@ ClassMethod VectorSearch() As %Status
             Do ##class(Terminology.Vector.Utils).EncodeText(q, model)
         }
 
+        If $Get(%request.Data("debug",1)) = "1" {
+            // 自检：本请求 EncodeText 编码的 q 与库内已知行点积（诊断 REST 上下文编码是否正常）
+            Set qv = ##class(Terminology.Vector.Utils).EncodeText(q, model)
+            Set chk = ##class(%SQL.Statement).%New()
+            Set csc = chk.%Prepare("SELECT VECTOR_DOT_PRODUCT(TO_VECTOR(?,DECIMAL), Embedding) AS S FROM Terminology_Vector.TermEmbedding WHERE Code=? AND SystemUri=?")
+            Set crs = chk.%Execute(qv, "NRDL-FDDBF2D502", "urn:cn-nhsa:drug-nrdl")
+            Do crs.%Next()
+            Set qvd = crs.%Get("S")
+        } Else {
+            Set qvd = ""
+        }
+
         Set out = {}
+        Set out.selfcheck = qvd
         Set out.count = res.Count
         Set out.items = []
         For i=1:1:res.Items.Count() {
