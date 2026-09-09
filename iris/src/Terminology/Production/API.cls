@@ -925,6 +925,15 @@ ClassMethod VectorSearch() As %Status
 
         Set res = ##class(Terminology.Vector.Utils).SearchSimilarMulti(q, sysUris, relIds, lang, limit, model)
 
+        // 编码自愈：Embedded HTTP 偶发中文编码异常会导致全库低分（<0.6）；重试一次通常即恢复。
+        // 正常弱匹配（罕见词 top<0.6）仅多一次检索，不影响正确性。
+        If (res.Count > 0) && (res.Items.Count() > 0) {
+            Set topScore = res.Items.GetAt(1).Score
+            If topScore < 0.6 {
+                Set res = ##class(Terminology.Vector.Utils).SearchSimilarMulti(q, sysUris, relIds, lang, limit, model)
+            }
+        }
+
         // 空结果时探活 embedding 服务：编码失败抛异常 -> catch 显式 500（不静默返回空）
         If res.Count=0 {
             Do ##class(Terminology.Vector.Utils).EncodeText(q, model)
