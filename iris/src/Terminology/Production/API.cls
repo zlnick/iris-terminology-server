@@ -1433,7 +1433,7 @@ ClassMethod TermSystemsPage() As %Status
     Write ".err{color:#c62828;padding:1rem}</style></head><body>"
     Write "<h1>🩺 术语服务器 · 术语集清单</h1><p id='st'>加载中…</p>"
     Write "<table id='tb' style='display:none'><thead><tr><th>术语集</th><th>语言</th><th>类别</th><th>结构化规模</th><th>向量</th><th>Code System (URI)</th><th>检索端点</th></tr></thead><tbody id='rows'></tbody></table>"
-    Write "<p class='note'>数据源：IRIS for Health 术语服务（fork 裁剪版）· 检索接口 GET /terminology/systems（JSON）</p>"
+    Write "<p class='note'>致谢：本术语服务器基于 InterSystems 开源项目《Terminology Server on InterSystems IRIS for Health》构建——感谢原作者与贡献者（InterSystems Developer Community，MIT License © 2026）。原项目定位为 IRIS 上的多术语参考实现（SNOMED CT / LOINC / ICD + FHIR API），可在 GitHub 检索 iris-terminology-server；本项目使用的 fork: https://github.com/zlnick/iris-terminology-server（demo-community 分支：community 镜像、关闭依赖 license 的 vector 运行组件），并扩展了中文药品 / RxNorm / 国标 ICD-10 / US Core SNOMED 术语集。JSON 清单接口: GET /terminology/systems。术语数据来源：国家医保及商保药品目录、NLM RxNorm（美国国立医学图书馆）、GB/T 14396-2016《疾病分类与代码》、SNOMED CT（IHTSDO 版权；此处仅用 US Core 值集公开展开样本）。</p>"
     Write "<script>"
     Write "fetch('systems').then(r=>r.json()).then(d=>{document.getElementById('st').textContent='共 '+d.items.length+' 个术语集';"
     Write "const tb=document.getElementById('tb'),tr=document.getElementById('rows');tb.style.display='table';"
