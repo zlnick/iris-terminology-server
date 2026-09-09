@@ -1110,8 +1110,13 @@ ClassMethod RxnormZhMap() As %Status
         }
         Set stmt = ##class(%SQL.Statement).%New()
         If q '= "" {
-            Do stmt.%Prepare("SELECT TOP 20 ZhName, Rxcui, EnName, Tty, Source FROM Terminology_Rxnorm.ChineseAlias WHERE ZhName LIKE ? ORDER BY ZhName")
-            Set rs = stmt.%Execute("%"_q_"%")
+            // 双向包含：ZhName 含 q（词表名较长，如"阿基仑赛注射液"）或 q 含 ZhName
+            //（查询带剂型后缀如"阿基仑赛注射液"vs词表"阿基仑赛"）都命中
+            Set esc = $Replace(q, "'", "''")
+            Set sql = "SELECT TOP 20 ZhName, Rxcui, EnName, Tty, Source FROM Terminology_Rxnorm.ChineseAlias "
+            Set sql = sql _ "WHERE (ZhName LIKE '%" _ esc _ "%') OR ('" _ esc _ "' LIKE '%' || ZhName || '%') ORDER BY ZhName"
+            Do stmt.%Prepare(sql)
+            Set rs = stmt.%Execute()
         } Else {
             Do stmt.%Prepare("SELECT TOP 20 ZhName, Rxcui, EnName, Tty, Source FROM Terminology_Rxnorm.ChineseAlias WHERE Rxcui = ? ORDER BY ZhName")
             Set rs = stmt.%Execute(code)
