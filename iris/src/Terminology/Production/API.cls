@@ -68,6 +68,7 @@ XData UrlMap
     <Route Url="/uscore-condition/search" Method="GET" Call="UsCoreConditionSearch"/>
     <Route Url="/uscore-condition/lookup" Method="GET" Call="UsCoreConditionLookup"/>
     <Route Url="/uscore-condition/validate-code" Method="GET" Call="UsCoreConditionValidate"/>
+    <Route Url="/uscore-condition/zh-map" Method="GET" Call="UsCoreConditionZhMap"/>
     <Route Url="/systems" Method="GET" Call="TermSystemsJson"/>
     <Route Url="/" Method="GET" Call="TermSystemsPage"/>
     <Route Url="/vector/search" Method="GET" Call="VectorSearch"/>
@@ -1441,6 +1442,47 @@ ClassMethod TermSystemsPage() As %Status
     Write "}).catch(e=>{document.getElementById('st').className='err';document.getElementById('st').textContent='加载失败: '+e;});"
     Write "</script></body></html>"
     Return $$$OK
+}
+
+ClassMethod UsCoreConditionZhMap() As %Status
+{
+    // 中文诊断 → SNOMED 双语词表（近义词先决）：?q=中文诊断名（双向包含）或 ?code=SNOMED/国标码
+    Try {
+        Set q = $Get(%request.Data("q",1))
+        Set code = $Get(%request.Data("code",1))
+        If (q = "") && (code = "") {
+            Do ..WriteError("参数 q（中文诊断）或 code（SNOMED/国标码）必填", 400)
+            Return $$$OK
+        }
+        Set stmt = ##class(%SQL.Statement).%New()
+        If q '= "" {
+            Set esc = $Replace(q, "'", "''")
+            Set sql = "SELECT TOP 20 ZhName, CnCode, Code, Display FROM Terminology_SnomedUs.ChineseAlias "
+            Set sql = sql _ "WHERE (ZhName LIKE '%" _ esc _ "%') OR ('" _ esc _ "' LIKE '%' || ZhName || '%') ORDER BY ZhName"
+            Do stmt.%Prepare(sql)
+            Set rs = stmt.%Execute()
+        } Else {
+            Do stmt.%Prepare("SELECT TOP 20 ZhName, CnCode, Code, Display FROM Terminology_SnomedUs.ChineseAlias WHERE Code = ? OR CnCode = ? ORDER BY ZhName")
+            Set rs = stmt.%Execute(code, code)
+        }
+        Set out = {}
+        Set out.items = []
+        While rs.%Next() {
+            Set o = {}
+            Set o.zhName = rs.%Get("ZhName")
+            Set o.cnCode = rs.%Get("CnCode")
+            Set o.code = rs.%Get("Code")
+            Set o.display = rs.%Get("Display")
+            Do out.items.%Push(o)
+        }
+        Set out.count = out.items.%Size()
+        Set %response.ContentType = "application/json"
+        Do out.%ToJSON()
+        Return $$$OK
+    } Catch ex {
+        Do ..WriteError(ex.DisplayString(), 500)
+        Return $$$OK
+    }
 }
 
 ClassMethod SendGatewayRequest(pRequest As Ens.Request, Output pResponse As Ens.Response, tGatewayName As %String, tTargetName As %String) As %Status
