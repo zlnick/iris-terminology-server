@@ -62,6 +62,9 @@ XData UrlMap
     <Route Url="/rxnorm/lookup" Method="GET" Call="RxnormLookup"/>
     <Route Url="/rxnorm/validate-code" Method="GET" Call="RxnormValidate"/>
     <Route Url="/rxnorm/chinese-map" Method="GET" Call="RxnormZhMap"/>
+    <Route Url="/icd10/search" Method="GET" Call="Icd10Search"/>
+    <Route Url="/icd10/lookup" Method="GET" Call="Icd10Lookup"/>
+    <Route Url="/icd10/validate-code" Method="GET" Call="Icd10Validate"/>
     <Route Url="/vector/search" Method="GET" Call="VectorSearch"/>
     <Route Url="/vector/crosswalk" Method="GET" Call="VectorCrosswalk"/>
 </Routes>
@@ -1133,6 +1136,99 @@ ClassMethod RxnormZhMap() As %Status
             Do out.items.%Push(o)
         }
         Set out.count = out.items.%Size()
+        Set %response.ContentType = "application/json"
+        Do out.%ToJSON()
+        Return $$$OK
+    } Catch ex {
+        Do ..WriteError(ex.DisplayString(), 500)
+        Return $$$OK
+    }
+}
+
+ClassMethod Icd10Search() As %Status
+{
+    // 国标 ICD-10 诊断检索：q 必填（编码前缀或疾病名包含），可选 limit
+    Try {
+        Set q = $Get(%request.Data("q",1))
+        If $ZSTRIP(q,"<>W")="" {
+            Do ..WriteError("参数 q（疾病名/编码）必填", 400)
+            Return $$$OK
+        }
+        Set limit = +$Get(%request.Data("limit",1))
+        If limit=0 Set limit=20
+        Set stmt = ##class(%SQL.Statement).%New()
+        Set sql = "SELECT TOP ? Code, Name, Dagger FROM Terminology_Icd10.Concept "
+        Set sql = sql _ "WHERE (Name LIKE ? OR Code LIKE ?) ORDER BY $LENGTH(Code), Code"
+        Do stmt.%Prepare(sql)
+        Set rs = stmt.%Execute(limit, "%"_q_"%", q_"%")
+        Set out = {}
+        Set out.query = q
+        Set out.items = []
+        While rs.%Next() {
+            Set o = {}
+            Set o.code = rs.%Get("Code")
+            Set o.name = rs.%Get("Name")
+            Set o.dagger = rs.%Get("Dagger")
+            Do out.items.%Push(o)
+        }
+        Set out.count = out.items.%Size()
+        Set %response.ContentType = "application/json"
+        Do out.%ToJSON()
+        Return $$$OK
+    } Catch ex {
+        Do ..WriteError(ex.DisplayString(), 500)
+        Return $$$OK
+    }
+}
+
+ClassMethod Icd10Lookup() As %Status
+{
+    // 国标 ICD-10 编码查询：code 必填
+    Try {
+        Set code = $Get(%request.Data("code",1))
+        If code = "" {
+            Do ..WriteError("参数 code 必填", 400)
+            Return $$$OK
+        }
+        Set stmt = ##class(%SQL.Statement).%New()
+        Do stmt.%Prepare("SELECT Code, Name, Dagger FROM Terminology_Icd10.Concept WHERE Code = ?")
+        Set rs = stmt.%Execute(code)
+        If rs.%Next() {
+            Set out = {}
+            Set out.code = rs.%Get("Code")
+            Set out.name = rs.%Get("Name")
+            Set out.dagger = rs.%Get("Dagger")
+            Set %response.ContentType = "application/json"
+            Do out.%ToJSON()
+            Return $$$OK
+        }
+        Do ..WriteError("编码不存在: "_code, 404)
+        Return $$$OK
+    } Catch ex {
+        Do ..WriteError(ex.DisplayString(), 500)
+        Return $$$OK
+    }
+}
+
+ClassMethod Icd10Validate() As %Status
+{
+    // 国标 ICD-10 编码校验
+    Try {
+        Set code = $Get(%request.Data("code",1))
+        If code = "" {
+            Do ..WriteError("参数 code 必填", 400)
+            Return $$$OK
+        }
+        Set stmt = ##class(%SQL.Statement).%New()
+        Do stmt.%Prepare("SELECT TOP 1 Code FROM Terminology_Icd10.Concept WHERE Code = ?")
+        Set rs = stmt.%Execute(code)
+        Set out = {}
+        If rs.%Next() {
+            Set out.valid = 1
+        } Else {
+            Set out.valid = 0
+        }
+        Set out.code = code
         Set %response.ContentType = "application/json"
         Do out.%ToJSON()
         Return $$$OK
