@@ -1393,7 +1393,7 @@ ClassMethod TermSystemsJson() As %Status
         Set o.language = "zh"
         Set o.kind = "diagnosis"
         Set o.count = ..TableCount("SELECT COUNT(*) FROM Terminology_Icd10.Concept")
-        Set o.vectorCount = 0
+        Set o.vectorCount = ..TableCount("SELECT COUNT(*) FROM Terminology_Vector.TermEmbedding WHERE SystemUri='urn:cn-nhsa:icd10-gbt2016'")
         Set o.systemUri = "urn:cn-nhsa:icd10-gbt2016"
         Set o.endpoints = "/terminology/icd10/search|lookup|validate-code"
         Do out.items.%Push(o)
@@ -1405,7 +1405,7 @@ ClassMethod TermSystemsJson() As %Status
         Set o.language = "en"
         Set o.kind = "diagnosis"
         Set o.count = ..TableCount("SELECT COUNT(*) FROM Terminology_SnomedUs.Concept")
-        Set o.vectorCount = 0
+        Set o.vectorCount = ..TableCount("SELECT COUNT(*) FROM Terminology_Vector.TermEmbedding WHERE SystemUri='urn:uscore:condition-sample'")
         Set o.systemUri = "http://snomed.info/sct (US Core context)"
         Set o.endpoints = "/terminology/uscore-condition/search|lookup|validate-code"
         Do out.items.%Push(o)
