@@ -61,6 +61,7 @@ XData UrlMap
     <Route Url="/rxnorm/search" Method="GET" Call="RxnormSearch"/>
     <Route Url="/rxnorm/lookup" Method="GET" Call="RxnormLookup"/>
     <Route Url="/rxnorm/validate-code" Method="GET" Call="RxnormValidate"/>
+    <Route Url="/rxnorm/chinese-map" Method="GET" Call="RxnormZhMap"/>
     <Route Url="/vector/search" Method="GET" Call="VectorSearch"/>
     <Route Url="/vector/crosswalk" Method="GET" Call="VectorCrosswalk"/>
 </Routes>
@@ -1088,6 +1089,45 @@ ClassMethod RxnormValidate() As %Status
             Set out.valid = 0
         }
         Set out.rxcui = rxcui
+        Set %response.ContentType = "application/json"
+        Do out.%ToJSON()
+        Return $$$OK
+    } Catch ex {
+        Do ..WriteError(ex.DisplayString(), 500)
+        Return $$$OK
+    }
+}
+
+ClassMethod RxnormZhMap() As %Status
+{
+    // 中文药名 ↔ RxNorm 别名映射查询：?q=中文名（LIKE）或 ?code=RXCUI（反查）
+    Try {
+        Set q = $Get(%request.Data("q",1))
+        Set code = $Get(%request.Data("code",1))
+        If (q = "") && (code = "") {
+            Do ..WriteError("参数 q（中文名）或 code（RXCUI）必填", 400)
+            Return $$$OK
+        }
+        Set stmt = ##class(%SQL.Statement).%New()
+        If q '= "" {
+            Do stmt.%Prepare("SELECT TOP 20 ZhName, Rxcui, EnName, Tty, Source FROM Terminology_Rxnorm.ChineseAlias WHERE ZhName LIKE ? ORDER BY ZhName")
+            Set rs = stmt.%Execute("%"_q_"%")
+        } Else {
+            Do stmt.%Prepare("SELECT TOP 20 ZhName, Rxcui, EnName, Tty, Source FROM Terminology_Rxnorm.ChineseAlias WHERE Rxcui = ? ORDER BY ZhName")
+            Set rs = stmt.%Execute(code)
+        }
+        Set out = {}
+        Set out.items = []
+        While rs.%Next() {
+            Set o = {}
+            Set o.zhName = rs.%Get("ZhName")
+            Set o.rxcui = rs.%Get("Rxcui")
+            Set o.enName = rs.%Get("EnName")
+            Set o.tty = rs.%Get("Tty")
+            Set o.source = rs.%Get("Source")
+            Do out.items.%Push(o)
+        }
+        Set out.count = out.items.%Size()
         Set %response.ContentType = "application/json"
         Do out.%ToJSON()
         Return $$$OK
