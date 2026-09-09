@@ -65,6 +65,9 @@ XData UrlMap
     <Route Url="/icd10/search" Method="GET" Call="Icd10Search"/>
     <Route Url="/icd10/lookup" Method="GET" Call="Icd10Lookup"/>
     <Route Url="/icd10/validate-code" Method="GET" Call="Icd10Validate"/>
+    <Route Url="/uscore-condition/search" Method="GET" Call="UsCoreConditionSearch"/>
+    <Route Url="/uscore-condition/lookup" Method="GET" Call="UsCoreConditionLookup"/>
+    <Route Url="/uscore-condition/validate-code" Method="GET" Call="UsCoreConditionValidate"/>
     <Route Url="/vector/search" Method="GET" Call="VectorSearch"/>
     <Route Url="/vector/crosswalk" Method="GET" Call="VectorCrosswalk"/>
 </Routes>
@@ -1221,6 +1224,97 @@ ClassMethod Icd10Validate() As %Status
         }
         Set stmt = ##class(%SQL.Statement).%New()
         Do stmt.%Prepare("SELECT TOP 1 Code FROM Terminology_Icd10.Concept WHERE Code = ?")
+        Set rs = stmt.%Execute(code)
+        Set out = {}
+        If rs.%Next() {
+            Set out.valid = 1
+        } Else {
+            Set out.valid = 0
+        }
+        Set out.code = code
+        Set %response.ContentType = "application/json"
+        Do out.%ToJSON()
+        Return $$$OK
+    } Catch ex {
+        Do ..WriteError(ex.DisplayString(), 500)
+        Return $$$OK
+    }
+}
+
+ClassMethod UsCoreConditionSearch() As %Status
+{
+    // US Core Condition SNOMED 样本检索：q 必填（显示名包含或码前缀），可选 limit
+    Try {
+        Set q = $Get(%request.Data("q",1))
+        If $ZSTRIP(q,"<>W")="" {
+            Do ..WriteError("参数 q（病名/码）必填", 400)
+            Return $$$OK
+        }
+        Set limit = +$Get(%request.Data("limit",1))
+        If limit=0 Set limit=20
+        Set stmt = ##class(%SQL.Statement).%New()
+        Set sql = "SELECT TOP ? Code, Display FROM Terminology_SnomedUs.Concept "
+        Set sql = sql _ "WHERE (Display LIKE ? OR Code LIKE ?) ORDER BY $LENGTH(Display), Code"
+        Do stmt.%Prepare(sql)
+        Set rs = stmt.%Execute(limit, "%"_q_"%", q_"%")
+        Set out = {}
+        Set out.query = q
+        Set out.items = []
+        While rs.%Next() {
+            Set o = {}
+            Set o.code = rs.%Get("Code")
+            Set o.display = rs.%Get("Display")
+            Do out.items.%Push(o)
+        }
+        Set out.count = out.items.%Size()
+        Set %response.ContentType = "application/json"
+        Do out.%ToJSON()
+        Return $$$OK
+    } Catch ex {
+        Do ..WriteError(ex.DisplayString(), 500)
+        Return $$$OK
+    }
+}
+
+ClassMethod UsCoreConditionLookup() As %Status
+{
+    // US Core Condition SNOMED 码查询
+    Try {
+        Set code = $Get(%request.Data("code",1))
+        If code = "" {
+            Do ..WriteError("参数 code 必填", 400)
+            Return $$$OK
+        }
+        Set stmt = ##class(%SQL.Statement).%New()
+        Do stmt.%Prepare("SELECT Code, Display FROM Terminology_SnomedUs.Concept WHERE Code = ?")
+        Set rs = stmt.%Execute(code)
+        If rs.%Next() {
+            Set out = {}
+            Set out.code = rs.%Get("Code")
+            Set out.display = rs.%Get("Display")
+            Set %response.ContentType = "application/json"
+            Do out.%ToJSON()
+            Return $$$OK
+        }
+        Do ..WriteError("编码不存在: "_code, 404)
+        Return $$$OK
+    } Catch ex {
+        Do ..WriteError(ex.DisplayString(), 500)
+        Return $$$OK
+    }
+}
+
+ClassMethod UsCoreConditionValidate() As %Status
+{
+    // US Core Condition SNOMED 码校验
+    Try {
+        Set code = $Get(%request.Data("code",1))
+        If code = "" {
+            Do ..WriteError("参数 code 必填", 400)
+            Return $$$OK
+        }
+        Set stmt = ##class(%SQL.Statement).%New()
+        Do stmt.%Prepare("SELECT TOP 1 Code FROM Terminology_SnomedUs.Concept WHERE Code = ?")
         Set rs = stmt.%Execute(code)
         Set out = {}
         If rs.%Next() {
