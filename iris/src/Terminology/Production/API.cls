@@ -68,6 +68,8 @@ XData UrlMap
     <Route Url="/uscore-condition/search" Method="GET" Call="UsCoreConditionSearch"/>
     <Route Url="/uscore-condition/lookup" Method="GET" Call="UsCoreConditionLookup"/>
     <Route Url="/uscore-condition/validate-code" Method="GET" Call="UsCoreConditionValidate"/>
+    <Route Url="/systems" Method="GET" Call="TermSystemsJson"/>
+    <Route Url="/" Method="GET" Call="TermSystemsPage"/>
     <Route Url="/vector/search" Method="GET" Call="VectorSearch"/>
     <Route Url="/vector/crosswalk" Method="GET" Call="VectorCrosswalk"/>
 </Routes>
@@ -1330,6 +1332,115 @@ ClassMethod UsCoreConditionValidate() As %Status
         Do ..WriteError(ex.DisplayString(), 500)
         Return $$$OK
     }
+}
+
+ClassMethod TableCount(pSql As %String) As %Integer [ Private ]
+{
+    // 轻量 COUNT 辅助：表不存在/出错返回 -1
+    Set n = -1
+    Try {
+        Set st = ##class(%SQL.Statement).%New()
+        Do st.%Prepare(pSql)
+        Set rs = st.%Execute()
+        If rs.%Next() Set n = +rs.%GetData(1)
+    } Catch ex {
+        Set n = -1
+    }
+    Quit n
+}
+
+ClassMethod TermSystemsJson() As %Status
+{
+    // 术语集清单 JSON：GET /terminology/systems（浏览器/前端可用）
+    Try {
+        Set out = {}
+        Set out.items = []
+
+        // ① 中文药品（医保目录 + 商保补充）
+        Set nrdl = ..TableCount("SELECT COUNT(*) FROM Terminology_Drug.Code WHERE CodeSystemId='nrdl'")
+        Set cbih = ..TableCount("SELECT COUNT(*) FROM Terminology_Drug.Code WHERE CodeSystemId='cbih'")
+        If nrdl < 0 Set nrdl = ..TableCount("SELECT COUNT(*) FROM Terminology_Drug.Code")
+        If cbih < 0 Set cbih = 0
+        Set o = {}
+        Set o.id = "chinese-drugs"
+        Set o.name = "中文药品（医保目录 NRDL + 商保补充 CBIH）"
+        Set o.language = "zh"
+        Set o.kind = "drug"
+        Set o.count = nrdl + cbih
+        Set o.vectorCount = (..TableCount("SELECT COUNT(*) FROM Terminology_Vector.TermEmbedding WHERE SystemUri='urn:cn-nhsa:drug-nrdl'")
+                            + ..TableCount("SELECT COUNT(*) FROM Terminology_Vector.TermEmbedding WHERE SystemUri='urn:cn-nhsa:drug-cbih'"))
+        Set o.systemUri = "urn:cn-nhsa:drug-nrdl / urn:cn-nhsa:drug-cbih"
+        Set o.endpoints = "/terminology/drug/search|lookup|validate-code|codesystems"
+        Do out.items.%Push(o)
+
+        // ② RxNorm 药品（英文）
+        Set o = {}
+        Set o.id = "rxnorm"
+        Set o.name = "RxNorm 药品（IN/SCD/BN 全层级 + 中文别名映射）"
+        Set o.language = "en"
+        Set o.kind = "drug"
+        Set o.count = ..TableCount("SELECT COUNT(*) FROM Terminology_Rxnorm.Concept")
+        Set o.vectorCount = ..TableCount("SELECT COUNT(*) FROM Terminology_Vector.TermEmbedding WHERE SystemUri='http://www.nlm.nih.gov/research/umls/rxnorm'")
+        Set o.systemUri = "http://www.nlm.nih.gov/research/umls/rxnorm"
+        Set o.endpoints = "/terminology/rxnorm/search|lookup|validate-code|chinese-map"
+        Do out.items.%Push(o)
+
+        // ③ 中文诊断（国标 ICD-10）
+        Set o = {}
+        Set o.id = "chinese-icd10"
+        Set o.name = "中文诊断（国标 ICD-10 GB/T 14396-2016）"
+        Set o.language = "zh"
+        Set o.kind = "diagnosis"
+        Set o.count = ..TableCount("SELECT COUNT(*) FROM Terminology_Icd10.Concept")
+        Set o.vectorCount = 0
+        Set o.systemUri = "urn:cn-nhsa:icd10-gbt2016"
+        Set o.endpoints = "/terminology/icd10/search|lookup|validate-code"
+        Do out.items.%Push(o)
+
+        // ④ SNOMED CT 诊断（US Core Condition 值集样本）
+        Set o = {}
+        Set o.id = "snomed-uscore"
+        Set o.name = "SNOMED CT 诊断（US Core Condition Codes 公开样本）"
+        Set o.language = "en"
+        Set o.kind = "diagnosis"
+        Set o.count = ..TableCount("SELECT COUNT(*) FROM Terminology_SnomedUs.Concept")
+        Set o.vectorCount = 0
+        Set o.systemUri = "http://snomed.info/sct (US Core context)"
+        Set o.endpoints = "/terminology/uscore-condition/search|lookup|validate-code"
+        Do out.items.%Push(o)
+
+        Set %response.ContentType = "application/json"
+        Do out.%ToJSON()
+        Return $$$OK
+    } Catch ex {
+        Do ..WriteError(ex.DisplayString(), 500)
+        Return $$$OK
+    }
+}
+
+ClassMethod TermSystemsPage() As %Status
+{
+    // 术语集状态页：GET /terminology/（浏览器直接看；同源 fetch /systems）
+    Set %response.ContentType = "text/html; charset=utf-8"
+    Write "<!doctype html><html lang='zh-CN'><head><meta charset='utf-8'>"
+    Write "<title>术语服务器 · 术语集</title>"
+    Write "<style>body{font-family:system-ui,-apple-system,'PingFang SC','Microsoft YaHei',sans-serif;margin:2rem auto;max-width:1080px;padding:0 1rem;color:#222}"
+    Write "h1{font-size:1.4rem}table{border-collapse:collapse;width:100%;margin-top:1rem;font-size:.92rem}"
+    Write "th,td{border:1px solid #d9dee6;padding:.55rem .7rem;text-align:left;vertical-align:top}"
+    Write "th{background:#f3f6fa}.badge{display:inline-block;padding:.05rem .5rem;border-radius:10px;font-size:.75rem;font-weight:600}"
+    Write ".ok{background:#e4f5e9;color:#1a7f37}.no{background:#fdecea;color:#c62828}.kind{font-weight:600}"
+    Write ".vec{color:#1a7f37}.mono{font-family:ui-monospace,Menlo,monospace;font-size:.8rem}.note{color:#777;font-size:.85rem;margin-top:1.5rem}"
+    Write ".err{color:#c62828;padding:1rem}</style></head><body>"
+    Write "<h1>🩺 术语服务器 · 术语集清单</h1><p id='st'>加载中…</p>"
+    Write "<table id='tb' style='display:none'><thead><tr><th>术语集</th><th>语言</th><th>类别</th><th>结构化规模</th><th>向量</th><th>Code System (URI)</th><th>检索端点</th></tr></thead><tbody id='rows'></tbody></table>"
+    Write "<p class='note'>数据源：IRIS for Health 术语服务（fork 裁剪版）· 检索接口 GET /terminology/systems（JSON）</p>"
+    Write "<script>"
+    Write "fetch('systems').then(r=>r.json()).then(d=>{document.getElementById('st').textContent='共 '+d.items.length+' 个术语集';"
+    Write "const tb=document.getElementById('tb'),tr=document.getElementById('rows');tb.style.display='table';"
+    Write "d.items.forEach(it=>{const row=document.createElement('tr');row.innerHTML=`<td class='kind'>${it.name}</td><td>${it.language==='zh'?'中文':'English'}</td><td>${it.kind==='drug'?'💊药品':'📋诊断'}</td><td>${it.count}</td><td>${it.vectorCount>0?'向量 '+it.vectorCount:'未向量'}</td><td class='mono'>${it.systemUri}</td><td class='mono'>${it.endpoints}</td>`;tr.appendChild(row);});"
+    Write "}).catch(e=>{document.getElementById('st').className='err';document.getElementById('st').textContent='加载失败: '+e;});"
+    Write "</script></body></html>"
+    Return $$$OK
 }
 
 ClassMethod SendGatewayRequest(pRequest As Ens.Request, Output pResponse As Ens.Response, tGatewayName As %String, tTargetName As %String) As %Status
