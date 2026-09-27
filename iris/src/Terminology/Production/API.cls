@@ -73,6 +73,14 @@ XData UrlMap
     <Route Url="/" Method="GET" Call="TermSystemsPage"/>
     <Route Url="/vector/search" Method="GET" Call="VectorSearch"/>
     <Route Url="/vector/crosswalk" Method="GET" Call="VectorCrosswalk"/>
+    <Route Url="/mapping/systems" Method="GET" Call="TermMappingSystems"/>
+    <Route Url="/mapping/lookup" Method="GET" Call="TermMappingLookup"/>
+    <Route Url="/mapping/availability" Method="GET" Call="TermMappingAvailability"/>
+    <Route Url="/mapping/availability" Method="POST" Call="TermMappingAvailability"/>
+    <Route Url="/mapping/coverage" Method="GET" Call="TermMappingCoverage"/>
+    <Route Url="/mapping/entries" Method="GET" Call="TermMappingEntries"/>
+    <Route Url="/mapping/entry" Method="POST" Call="TermMappingEntryUpsert"/>
+    <Route Url="/mapping/entries" Method="POST" Call="TermMappingEntriesUpsert"/>
 </Routes>
 }
 
@@ -1577,5 +1585,527 @@ ClassMethod DrugCodeSystems() As %Status
     Write {"codeSystems":(arr)}.%ToJSON()
     Return $$$OK
 }
+// ==================== 术语转换映射（Terminology_Mapping.CodeMap） ====================
+// 定位：**术语转换的事实源**——由平台侧判定 Agent 的产物或人工核对**预先写入**；
+// 平台生成数据转换时先查目录/可用性，把命中的映射迁移为**本地缓存**（运行期只读本地缓存）。
+//
+// ⚠ ObjectScript 坑：本文件禁止写 `$Get(x.%Get("k"))` —— `$Get()` 包裹动态对象取值会报
+// `<INVALID CLASS> Class '%Library.DynamicObject' does not support MultiDimensional operations`。
+// 直接 `x.%Get("k")` 即可（键缺失返回空串，`x.%Get("k") = ""` 为真）。
 
+/// SQL 字面量转义（单引号翻倍），用于按需拼装 IN 列表
+ClassMethod TmEsc(pVal As %String) As %String
+{
+    Quit $Replace($Replace($Get(pVal), $Char(0), ""), "'", "''")
+}
+
+/// 码归一（大写）：走 CodeMap.Normalize，保证服务器侧唯一键口径单一
+ClassMethod TmNorm(pCode As %String) As %String
+{
+    Quit ##class(Terminology.Mapping.CodeMap).Normalize(pCode)
+}
+
+/// 解析 POST JSON body（空或非法时返回空对象，调用方回退 query 参数）
+ClassMethod TmBody() As %DynamicObject
+{
+    Set out = {}
+    Set text = ""
+    Try {
+        Set content = %request.Content
+        If $IsObject(content) {
+            Do content.Rewind()
+            Set text = content.Read(1000000)
+        } Else {
+            Set text = content
+        }
+    } Catch ex {
+        Set text = ""
+    }
+    If text = "" Quit out
+    Try {
+        Set out = {}.%FromJSON(text)
+    } Catch ex {
+        Set out = {}
+    }
+    Quit out
+}
+
+/// 按逗号分隔字段名把结果集转成 JSON 数组
+ClassMethod TmRows(rs As %SQL.StatementResult, pFields As %String) As %DynamicArray
+{
+    Set arr = []
+    Set n = $Length(pFields, ",")
+    While rs.%Next() {
+        Set o = {}
+        For i = 1:1:n {
+            Set f = $Piece(pFields, ",", i)
+            Do o.%Set(f, rs.%Get(f))
+        }
+        Do arr.%Push(o)
+    }
+    Quit arr
+}
+
+/// 幂等写入一条映射（唯一键 = 源体系 + 源码归一 + 目标体系）；pAction 输出 insert/update
+ClassMethod TmUpsert(pRow As %DynamicObject, Output pAction As %String) As %Status
+{
+    Set pAction = ""
+    Set src = pRow.%Get("sourceSystem")
+    Set code = pRow.%Get("sourceCode")
+    Set tgt = pRow.%Get("targetSystem")
+    If (src = "") || (code = "") || (tgt = "") {
+        Quit $System.Status.Error(5001, "sourceSystem / sourceCode / targetSystem 必填")
+    }
+    Set codeU = ..TmNorm(code)
+    Set stmt = ##class(%SQL.Statement).%New()
+    // 体系名/源码归一的比较：列排序规则本身是 %SQLUPPER（大小写不敏感）→ 普通等值即可。
+    // ⚠ 不可写 `%SQLUPPER(col) = ?`：IRIS 的 %SQLUPPER() 返回值**带前导空格**（索引下标形如 " URN:…"），
+    //    与不带空格的参数比较永不相等 → 会把已存在行判成新行 → 唯一索引报 5808 Key not unique。
+    Set sc = stmt.%Prepare("SELECT ID FROM Terminology_Mapping.CodeMap WHERE SourceSystem = ? AND SourceCodeU = ? AND TargetSystem = ?")
+    If $$$ISERR(sc) Quit sc
+    Set rs = stmt.%Execute(src, codeU, tgt)
+    If rs.%Next() {
+        Set obj = ##class(Terminology.Mapping.CodeMap).%OpenId(rs.%Get("ID"))
+        Set pAction = "update"
+    } Else {
+        Set obj = ##class(Terminology.Mapping.CodeMap).%New()
+        Set obj.SourceSystem = src
+        Set pAction = "insert"
+    }
+    Set obj.SourceCode = code
+    If pRow.%Get("sourceDisplay") '= "" Set obj.SourceDisplay = pRow.%Get("sourceDisplay")
+    Set obj.TargetSystem = tgt
+    Set obj.TargetCode = pRow.%Get("targetCode")
+    If pRow.%Get("targetDisplay") '= "" Set obj.TargetDisplay = pRow.%Get("targetDisplay")
+    Set m = pRow.%Get("method")
+    If m = "" Set m = "manual"
+    Set obj.Method = m
+    Set st = pRow.%Get("status")
+    If st = "" {
+        Set st = $Select(pRow.%Get("targetCode") = "": "negative", 1: "active")
+    }
+    Set obj.Status = st
+    If pRow.%Get("confidence") '= "" Set obj.Confidence = +pRow.%Get("confidence")
+    If pRow.%Get("evidence") '= "" Set obj.Evidence = pRow.%Get("evidence")
+    If pRow.%Get("note") '= "" Set obj.Note = pRow.%Get("note")
+    Quit obj.%Save()
+}
+
+/// 响应值规范化：体系 URI / 状态 / 方式 一律**小写**返回。
+/// （落库受 %SQLUPPER 排序规则影响会变大写，而 FHIR 的编码体系 URI 大小写敏感，
+///  故对外统一输出规范小写形态；编码本身保持原样返回，不做大小写改写。）
+ClassMethod TmCanon(pRow As %DynamicObject) As %DynamicObject
+{
+    Do pRow.%Set("SourceSystem", $ZCONVERT(pRow.%Get("SourceSystem"), "L"))
+    Do pRow.%Set("TargetSystem", $ZCONVERT(pRow.%Get("TargetSystem"), "L"))
+    Do pRow.%Set("Status", $ZCONVERT(pRow.%Get("Status"), "L"))
+    Do pRow.%Set("Method", $ZCONVERT(pRow.%Get("Method"), "L"))
+    Quit pRow
+}
+
+/// 目录：服务器上有哪些术语转换可以被使用（源体系 → 目标体系 + 条数/状态/更新时间）
+/// GET /terminology/mapping/systems
+ClassMethod TermMappingSystems() As %Status
+{
+    Try {
+        Set stmt = ##class(%SQL.Statement).%New()
+        Set sql = "SELECT SourceSystem, TargetSystem, Status, COUNT(*) AS N, MAX(UpdatedAt) AS UP"
+        Set sql = sql _ " FROM Terminology_Mapping.CodeMap GROUP BY SourceSystem, TargetSystem, Status"
+        Set sc = stmt.%Prepare(sql)
+        If $$$ISERR(sc) {
+            Do ..WriteError("术语转换映射表不可用（尚未初始化）: "_$System.Status.GetOneErrorText(sc), 500)
+            Return $$$OK
+        }
+        Set rs = stmt.%Execute()
+        Set agg = {}
+        While rs.%Next() {
+            Set srcSys = $ZCONVERT(rs.%Get("SourceSystem"), "L")
+            Set tgtSys = $ZCONVERT(rs.%Get("TargetSystem"), "L")
+            Set key = srcSys _ "|" _ tgtSys
+            Set row = agg.%Get(key)
+            If '$IsObject(row) {
+                Set row = {}
+                Do row.%Set("pair", key)
+                Do row.%Set("sourceSystem", srcSys)
+                Do row.%Set("targetSystem", tgtSys)
+                Do row.%Set("entries", 0)
+                Do row.%Set("active", 0)
+                Do row.%Set("negative", 0)
+                Do row.%Set("pending", 0)
+                Do row.%Set("updatedAt", "")
+                Do agg.%Set(key, row)
+            }
+            Set n = +rs.%Get("N")
+            Set st = $ZCONVERT(rs.%Get("Status"), "L")
+            Set up = rs.%Get("UP")
+            Do row.%Set("entries", row.%Get("entries") + n)
+            If st '= "" Do row.%Set(st, +row.%Get(st) + n)
+            If (up '= "") && ((row.%Get("updatedAt") = "") || (up > row.%Get("updatedAt"))) {
+                Do row.%Set("updatedAt", up)
+            }
+        }
+        Set out = {}
+        Set out.pairs = []
+        Set it = agg.%GetIterator()
+        While it.%GetNext(.k, .v) {
+            Do out.pairs.%Push(v)
+        }
+        Do out.%Set("count", out.pairs.%Size())
+        Do out.%Set("table", "Terminology_Mapping.CodeMap")
+        Do out.%Set("note", "active=可用；negative=已判定无映射（不阻断、不追加 coding）；pending=待复核。平台生成数据转换时先查本目录与 /mapping/availability，命中则迁移为本地缓存。")
+        Set %response.ContentType = "application/json"
+        Do out.%ToJSON()
+        Return $$$OK
+    } Catch ex {
+        Do ..WriteError(ex.DisplayString(), 500)
+        Return $$$OK
+    }
+}
+
+/// 单码查询：GET /terminology/mapping/lookup?sourceSystem=&sourceCode=[&targetSystem=]
+ClassMethod TermMappingLookup() As %Status
+{
+    Try {
+        Set src = ..TmQ("sourceSystem")
+        Set code = ..TmQ("sourceCode")
+        If code = "" Set code = ..TmQ("code")
+        Set tgt = ..TmQ("targetSystem")
+        If (src = "") || (code = "") {
+            Do ..WriteError("参数 sourceSystem 与 sourceCode 必填", 400)
+            Return $$$OK
+        }
+        Set fields = "SourceSystem,SourceCode,SourceDisplay,TargetSystem,TargetCode,TargetDisplay,Method,Status,Confidence,Evidence,UpdatedAt"
+        Set sql = "SELECT " _ fields _ " FROM Terminology_Mapping.CodeMap WHERE SourceSystem = '" _ ..TmEsc(src) _ "'"
+        Set sql = sql _ " AND SourceCodeU = '" _ ..TmEsc(..TmNorm(code)) _ "'"
+        If tgt '= "" Set sql = sql _ " AND TargetSystem = '" _ ..TmEsc(tgt) _ "'"
+        Set stmt = ##class(%SQL.Statement).%New()
+        Set sc = stmt.%Prepare(sql)
+        If $$$ISERR(sc) {
+            Do ..WriteError("术语转换映射表不可用（尚未初始化）: "_$System.Status.GetOneErrorText(sc), 500)
+            Return $$$OK
+        }
+        Set rs = stmt.%Execute()
+        Set items = ..TmRows(rs, fields)
+        For i = 0:1:(items.%Size() - 1) {
+            Do ..TmCanon(items.%Get(i))
+        }
+        Set out = {}
+        Do out.%Set("sourceSystem", src)
+        Do out.%Set("sourceCode", code)
+        Do out.%Set("found", items.%Size())
+        Do out.%Set("items", items)
+        If items.%Size() > 0 {
+            Set first = items.%Get(0)
+            Do out.%Set("status", first.%Get("Status"))
+            Do out.%Set("targetSystem", first.%Get("TargetSystem"))
+            Do out.%Set("targetCode", first.%Get("TargetCode"))
+            Do out.%Set("targetDisplay", first.%Get("TargetDisplay"))
+            Do out.%Set("method", first.%Get("Method"))
+        }
+        Set %response.ContentType = "application/json"
+        Do out.%ToJSON()
+        Return $$$OK
+    } Catch ex {
+        Do ..WriteError(ex.DisplayString(), 500)
+        Return $$$OK
+    }
+}
+
+/// 安全取 query 参数：%request.Data 是数组引用 → 缺参用 $Get 取空串；
+/// 上传/stream 入参时给对象，需读成字符串。⚠ 不能直接 `%request.Data(name,1)`（缺参会报 <UNDEFINED>）
+ClassMethod TmQ(pName As %String) As %String
+{
+    Set v = $Get(%request.Data(pName, 1))
+    If $IsObject(v) Quit v.Read(1000000)
+    Quit v
+}
+
+/// 批量可用性预检：这些源编码在服务器上能否转换（平台生成数据转换前的门禁用）
+/// GET  /terminology/mapping/availability?sourceSystem=&targetSystem=&codes=a,b,c
+/// POST /terminology/mapping/availability   body: {"sourceSystem","targetSystem","codes":[...]}
+ClassMethod TermMappingAvailability() As %Status
+{
+    Try {
+        Set body = ..TmBody()
+        Set src = body.%Get("sourceSystem")
+        If src = "" Set src = ..TmQ("sourceSystem")
+        Set tgt = body.%Get("targetSystem")
+        If tgt = "" Set tgt = ..TmQ("targetSystem")
+        Set codes = []
+        Set bc = body.%Get("codes")
+        If $IsObject(bc) {
+            For i = 1:1:bc.%Size() {
+                Do codes.%Push(bc.%Get(i - 1))
+            }
+        } Else {
+            Set cs = ..TmQ("codes")
+            If cs '= "" {
+                For i = 1:1:$Length(cs, ",") {
+                    Do codes.%Push($Piece(cs, ",", i))
+                }
+            }
+        }
+        If (src = "") || (tgt = "") || (codes.%Size() = 0) {
+            Do ..WriteError("参数 sourceSystem / targetSystem / codes 必填", 400)
+            Return $$$OK
+        }
+        Set want = []
+        Set inList = ""
+        For i = 1:1:codes.%Size() {
+            Set c = $ZSTRIP(codes.%Get(i - 1), "<>W")
+            If c = "" Continue
+            Do want.%Push(c)
+            If inList '= "" Set inList = inList _ ","
+            Set inList = inList _ "'" _ ..TmEsc(..TmNorm(c)) _ "'"
+        }
+        If inList = "" {
+            Do ..WriteError("codes 为空（去空白后无有效编码）", 400)
+            Return $$$OK
+        }
+        Set fields = "SourceSystem,SourceCode,SourceDisplay,TargetSystem,TargetCode,TargetDisplay,Method,Status,Confidence,Evidence,UpdatedAt"
+        Set sql = "SELECT " _ fields _ " FROM Terminology_Mapping.CodeMap WHERE SourceSystem = '" _ ..TmEsc(src) _ "'"
+        Set sql = sql _ " AND TargetSystem = '" _ ..TmEsc(tgt) _ "' AND SourceCodeU IN (" _ inList _ ")"
+        Set stmt = ##class(%SQL.Statement).%New()
+        Set sc = stmt.%Prepare(sql)
+        If $$$ISERR(sc) {
+            Do ..WriteError("术语转换映射表不可用（尚未初始化）: "_$System.Status.GetOneErrorText(sc), 500)
+            Return $$$OK
+        }
+        Set rs = stmt.%Execute()
+        Set found = {}
+        Set n = $Length(fields, ",")
+        While rs.%Next() {
+            Set cu = ..TmNorm(rs.%Get("SourceCode"))
+            If $IsObject(found.%Get(cu)) Continue
+            Set row = {}
+            For i = 1:1:n {
+                Set f = $Piece(fields, ",", i)
+                Do row.%Set(f, rs.%Get(f))
+            }
+            Do row.%Set("sourceCodeU", cu)
+            Do ..TmCanon(row)
+            Do found.%Set(cu, row)
+        }
+        Set items = {}, covered = [], negative = [], missing = [], pending = []
+        Set nCov = 0, nNeg = 0, nPend = 0
+        For i = 1:1:want.%Size() {
+            Set c = want.%Get(i - 1)
+            Set row = found.%Get(..TmNorm(c))
+            If '$IsObject(row) {
+                Do missing.%Push(c)
+                Continue
+            }
+            Set st = row.%Get("Status")
+            If (st = "active") && (row.%Get("TargetCode") '= "") {
+                Do items.%Set(c, row)
+                Do covered.%Push(c)
+                Set nCov = nCov + 1
+            } ElseIf st = "negative" {
+                Do items.%Set(c, row)
+                Do negative.%Push(c)
+                Set nNeg = nNeg + 1
+            } Else {
+                Do items.%Set(c, row)
+                Do pending.%Push(c)
+                Set nPend = nPend + 1
+            }
+        }
+        Set out = {}
+        Do out.%Set("sourceSystem", src)
+        Do out.%Set("targetSystem", tgt)
+        Do out.%Set("total", want.%Size())
+        Do out.%Set("covered", nCov)
+        Do out.%Set("negative", nNeg)
+        Do out.%Set("pendingOrUnknown", nPend)
+        Do out.%Set("missingCount", missing.%Size())
+        Do out.%Set("pendingCount", nPend)
+        Do out.%Set("blocking", missing.%Size() + nPend)
+        Do out.%Set("ok", ((missing.%Size() + nPend) = 0))
+        Do out.%Set("coveredCodes", covered)
+        Do out.%Set("negativeCodes", negative)
+        Do out.%Set("missingCodes", missing)
+        Do out.%Set("pendingCodes", pending)
+        Do out.%Set("items", items)
+        Do out.%Set("note", "covered=可迁移为本地缓存并追加目标体系 coding；negative=已判定无映射（按设计只保留源码，不阻断）；missing/pending=服务器尚无该转换 → 平台应中止生成并要求补齐")
+        Set %response.ContentType = "application/json"
+        Do out.%ToJSON()
+        Return $$$OK
+    } Catch ex {
+        Do ..WriteError(ex.DisplayString(), 500)
+        Return $$$OK
+    }
+}
+
+/// 覆盖率/清单统计：GET /terminology/mapping/coverage?sourceSystem=&targetSystem=[&status=]
+ClassMethod TermMappingCoverage() As %Status
+{
+    Try {
+        Set src = ..TmQ("sourceSystem")
+        Set tgt = ..TmQ("targetSystem")
+        Set st = ..TmQ("status")
+        If src = "" {
+            Do ..WriteError("参数 sourceSystem 必填", 400)
+            Return $$$OK
+        }
+        Set where = " WHERE SourceSystem = '" _ ..TmEsc(src) _ "'"
+        If tgt '= "" Set where = where _ " AND TargetSystem = '" _ ..TmEsc(tgt) _ "'"
+        If st '= "" Set where = where _ " AND Status = '" _ ..TmEsc(st) _ "'"
+        Set stmt = ##class(%SQL.Statement).%New()
+        Set sc = stmt.%Prepare("SELECT Status, COUNT(*) AS N FROM Terminology_Mapping.CodeMap" _ where _ " GROUP BY Status")
+        If $$$ISERR(sc) {
+            Do ..WriteError("术语转换映射表不可用（尚未初始化）: "_$System.Status.GetOneErrorText(sc), 500)
+            Return $$$OK
+        }
+        Set rs = stmt.%Execute()
+        Set counts = {}
+        Set total = 0
+        While rs.%Next() {
+            Set n = +rs.%Get("N")
+            Do counts.%Set($ZCONVERT(rs.%Get("Status"), "L"), n)
+            Set total = total + n
+        }
+        Set out = {}
+        Do out.%Set("sourceSystem", src)
+        Do out.%Set("targetSystem", tgt)
+        Do out.%Set("status", st)
+        Do out.%Set("entries", total)
+        Do out.%Set("byStatus", counts)
+        Do out.%Set("table", "Terminology_Mapping.CodeMap")
+        Set %response.ContentType = "application/json"
+        Do out.%ToJSON()
+        Return $$$OK
+    } Catch ex {
+        Do ..WriteError(ex.DisplayString(), 500)
+        Return $$$OK
+    }
+}
+
+/// 映射清单（供 UI/诊断）：GET /terminology/mapping/entries?sourceSystem=&targetSystem=&status=&limit=
+ClassMethod TermMappingEntries() As %Status
+{
+    Try {
+        Set src = ..TmQ("sourceSystem")
+        Set tgt = ..TmQ("targetSystem")
+        Set st = ..TmQ("status")
+        Set limit = +..TmQ("limit")
+        If limit <= 0 Set limit = 200
+        Set where = " WHERE 1=1"
+        If src '= "" Set where = where _ " AND SourceSystem = '" _ ..TmEsc(src) _ "'"
+        If tgt '= "" Set where = where _ " AND TargetSystem = '" _ ..TmEsc(tgt) _ "'"
+        If st '= "" Set where = where _ " AND Status = '" _ ..TmEsc(st) _ "'"
+        Set fields = "SourceSystem,SourceCode,SourceDisplay,TargetSystem,TargetCode,TargetDisplay,Method,Status,Confidence,Evidence,UpdatedAt"
+        Set sql = "SELECT TOP " _ limit _ " " _ fields _ " FROM Terminology_Mapping.CodeMap" _ where _ " ORDER BY UpdatedAt DESC"
+        Set stmt = ##class(%SQL.Statement).%New()
+        Set sc = stmt.%Prepare(sql)
+        If $$$ISERR(sc) {
+            Do ..WriteError("术语转换映射表不可用（尚未初始化）: "_$System.Status.GetOneErrorText(sc), 500)
+            Return $$$OK
+        }
+        Set rs = stmt.%Execute()
+        Set items = ..TmRows(rs, fields)
+        For i = 0:1:(items.%Size() - 1) {
+            Do ..TmCanon(items.%Get(i))
+        }
+        Set out = {}
+        Do out.%Set("count", items.%Size())
+        Do out.%Set("items", items)
+        Set %response.ContentType = "application/json"
+        Do out.%ToJSON()
+        Return $$$OK
+    } Catch ex {
+        Do ..WriteError(ex.DisplayString(), 500)
+        Return $$$OK
+    }
+}
+
+/// 幂等补录单条映射：POST /terminology/mapping/entry（body JSON，或 query 参数回退）
+ClassMethod TermMappingEntryUpsert() As %Status
+{
+    Try {
+        Set row = ..TmBody()
+        If row.%Size() = 0 {
+            Set row = {}
+            Do row.%Set("sourceSystem", ..TmQ("sourceSystem"))
+            Do row.%Set("sourceCode", ..TmQ("sourceCode"))
+            Do row.%Set("sourceDisplay", ..TmQ("sourceDisplay"))
+            Do row.%Set("targetSystem", ..TmQ("targetSystem"))
+            Do row.%Set("targetCode", ..TmQ("targetCode"))
+            Do row.%Set("targetDisplay", ..TmQ("targetDisplay"))
+            Do row.%Set("method", ..TmQ("method"))
+            Do row.%Set("status", ..TmQ("status"))
+            Do row.%Set("confidence", ..TmQ("confidence"))
+            Do row.%Set("evidence", ..TmQ("evidence"))
+            Do row.%Set("note", ..TmQ("note"))
+        }
+        Set action = ""
+        Set sc = ..TmUpsert(row, .action)
+        If $$$ISERR(sc) {
+            Do ..WriteError("写入失败: "_$System.Status.GetOneErrorText(sc), 400)
+            Return $$$OK
+        }
+        Set out = {}
+        Do out.%Set("ok", 1)
+        Do out.%Set("action", action)
+        Do out.%Set("sourceSystem", row.%Get("sourceSystem"))
+        Do out.%Set("sourceCode", row.%Get("sourceCode"))
+        Do out.%Set("targetSystem", row.%Get("targetSystem"))
+        Do out.%Set("targetCode", row.%Get("targetCode"))
+        Do out.%Set("status", row.%Get("status"))
+        Set %response.ContentType = "application/json"
+        Do out.%ToJSON()
+        Return $$$OK
+    } Catch ex {
+        Do ..WriteError(ex.DisplayString(), 500)
+        Return $$$OK
+    }
+}
+
+/// 批量补录：POST /terminology/mapping/entries   body: {"items":[{...},{...}]}
+ClassMethod TermMappingEntriesUpsert() As %Status
+{
+    Try {
+        Set body = ..TmBody()
+        Set items = body.%Get("items")
+        If '$IsObject(items) {
+            Set items = []
+            If body.%Size() > 0 Do items.%Push(body)
+        }
+        If items.%Size() = 0 {
+            Do ..WriteError("请求体需为 {""items"":[{...}]}（或单条映射对象）", 400)
+            Return $$$OK
+        }
+        Set inserted = 0, updated = 0
+        Set failed = []
+        For i = 1:1:items.%Size() {
+            Set row = items.%Get(i - 1)
+            If '$IsObject(row) {
+                Do failed.%Push({"index": (i - 1), "sourceCode": "", "error": "item 不是对象"})
+                Continue
+            }
+            Set action = ""
+            Set sc = ..TmUpsert(row, .action)
+            If $$$ISERR(sc) {
+                Do failed.%Push({"index": (i - 1), "sourceCode": (row.%Get("sourceCode")), "error": ($System.Status.GetOneErrorText(sc))})
+                Continue
+            }
+            If action = "insert" {
+                Set inserted = inserted + 1
+            } Else {
+                Set updated = updated + 1
+            }
+        }
+        Set out = {}
+        Do out.%Set("ok", (failed.%Size() = 0))
+        Do out.%Set("total", items.%Size())
+        Do out.%Set("inserted", inserted)
+        Do out.%Set("updated", updated)
+        Do out.%Set("failed", failed)
+        Set %response.ContentType = "application/json"
+        Do out.%ToJSON()
+        Return $$$OK
+    } Catch ex {
+        Do ..WriteError(ex.DisplayString(), 500)
+        Return $$$OK
+    }
+}
 }
